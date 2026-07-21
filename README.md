@@ -109,14 +109,15 @@ Run `python generate_sample_data.py` to create `data/sample_loan_default.csv` �
 └── generate_sample_data.py
 ```
 
-## Docker Commands
+## Deploy on Render
 
-```bash
-docker compose up --build -d    # Run in background
-docker compose logs -f          # View logs
-docker compose down             # Stop
-```
+1. Open [Render Dashboard](https://dashboard.render.com) and sign in with GitHub.
+2. **New → Blueprint** (or Web Service) → connect `Vekri/Binary-Classification`.
+3. Render reads `render.yaml` automatically. Confirm:
+   - **Build:** `pip install -r requirements.txt`
+   - **Start:** `streamlit run app/main.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true`
+4. Deploy. App URL will be like: `https://binary-classification-ml.onrender.com`
 
-## License
+Free tier may sleep after idle; first load can take ~30–60s.
 
-MIT
+Hub icon on [Singareddy AI](https://singareddy-ai.vercel.app) points to that Render URL.
