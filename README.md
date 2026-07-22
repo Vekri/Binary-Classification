@@ -18,13 +18,13 @@ A full-stack **binary classification** web application with an end-to-end data s
 | **Encoding** | Label, one-hot, target, binary, hashing encoders |
 | **Scaling** | Standard, min-max, robust, max-abs scalers |
 | **Feature Engineering** | Interactions, polynomials, log transforms, binning |
-| **Variable Reduction** | Variance threshold + PCA |
+| **Variable Reduction** | Voting (VIF + correlation + variance), VIF, correlation, variance threshold, PCA |
 | **Feature Selection** | SelectKBest, RFE, importance-based |
 | **Model Selection** | 8 classifiers compared via cross-validated ROC-AUC |
 | **Hyperparameter Tuning** | Optuna Bayesian optimization |
 | **Model Explanation** | SHAP values, feature importance, ROC/confusion matrix |
 | **Business Insights** | Actionable recommendations for stakeholders |
-| **Executive Report** | Auto-generated PDF summary |
+| **Report & Model Download** | PDF executive summary + `.joblib` / `.pkl` scoring packages |
 
 ## Tech Stack (All Free)
 
@@ -72,7 +72,7 @@ streamlit run app/main.py
 2. **Select** the target column in the sidebar
 3. **Walk through tabs** left to right — each step updates the processed dataset
 4. **Compare models** and train the best one
-5. **Generate** business insights and download the executive PDF report
+5. **Generate** business insights, download the executive PDF, and export the trained model (`.joblib` / `.pkl`) for scoring
 
 ### Sample Dataset
 
@@ -98,6 +98,7 @@ Run `python generate_sample_data.py` to create `data/sample_loan_default.csv` �
 │   │   ├── hyperparameter_tuning.py
 │   │   ├── model_explanation.py
 │   │   ├── business_insights.py
+│   │   ├── model_export.py
 │   │   └── report_generator.py
 │   └── utils/
 │       └── helpers.py

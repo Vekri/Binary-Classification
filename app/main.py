@@ -36,9 +36,25 @@ from app.modules.model_selection import (
     train_best_model,
 )
 from app.modules.outliers import outlier_boxplots, outlier_summary, treat_outliers
+from app.modules.model_export import (
+    SCORING_SNIPPET,
+    artifact_to_joblib_bytes,
+    artifact_to_pickle_bytes,
+    build_scoring_artifact,
+    feature_list_csv_bytes,
+    model_only_pickle_bytes,
+)
 from app.modules.report_generator import generate_executive_report
 from app.modules.scaling import apply_scaling, recommend_scaling
-from app.modules.variable_reduction import apply_pca, pca_scree_plot, variance_reduction
+from app.modules.variable_reduction import (
+    apply_pca,
+    correlation_reduction,
+    pca_scree_plot,
+    variance_reduction,
+    vif_reduction,
+    vote_summary_chart,
+    voting_variable_reduction,
+)
 
 st.set_page_config(
     page_title="Binary Classification ML Pipeline",
@@ -81,7 +97,7 @@ STEPS = [
     "12. Hyperparameter Tuning",
     "13. Model Explanation",
     "14. Business Insights",
-    "15. Executive Report",
+    "15. Report & Model Download",
 ]
 
 DEFAULTS = {
@@ -366,12 +382,72 @@ elif step == STEPS[7]:
 
 elif step == STEPS[8]:
     st.subheader("Variable Reduction")
-    method = st.radio("Method", ["Variance threshold", "PCA"])
-    if method == "Variance threshold":
+    st.caption(
+        "Prefer **Voting (VIF + Correlation + Variance)** to drop redundant features "
+        "only when multiple methods agree."
+    )
+    method = st.radio(
+        "Method",
+        [
+            "Voting (VIF + Corr + Variance)",
+            "VIF",
+            "Correlation",
+            "Variance threshold",
+            "PCA",
+        ],
+        index=0,
+    )
+
+    if method.startswith("Voting"):
+        c1, c2, c3, c4 = st.columns(4)
+        var_t = c1.slider("Variance threshold", 0.0, 0.1, 0.01, 0.005)
+        corr_t = c2.slider("Corr threshold", 0.5, 0.99, 0.90, 0.01)
+        vif_t = c3.slider("VIF threshold", 2.0, 30.0, 10.0, 0.5)
+        min_votes = c4.slider("Min drop votes", 1, 3, 2)
+        if st.button("Apply voting reduction", key="btn_vote_vr", type="primary"):
+            treated, log = voting_variable_reduction(
+                df,
+                target,
+                variance_threshold=var_t,
+                corr_threshold=corr_t,
+                vif_threshold=vif_t,
+                min_drop_votes=min_votes,
+            )
+            st.session_state.processed_df = treated
+            st.session_state.vr_log = log
+            st.success(
+                f"Dropped {len(log['removed'])} features "
+                f"(kept {len(log['kept_columns'])}) via voting"
+            )
+            log_step("Variable Reduction (Voting)")
+            st.rerun()
+
+    elif method == "VIF":
+        vif_t = st.slider("VIF threshold", 2.0, 30.0, 10.0, 0.5, key="vif_only")
+        if st.button("Apply VIF reduction", key="btn_vif"):
+            treated, log = vif_reduction(df, target, threshold=vif_t)
+            st.session_state.processed_df = treated
+            st.session_state.vr_log = log
+            st.success(f"Removed {len(log['removed'])} high-VIF features")
+            log_step("Variable Reduction (VIF)")
+            st.rerun()
+
+    elif method == "Correlation":
+        corr_t = st.slider("Correlation threshold", 0.5, 0.99, 0.90, 0.01, key="corr_only")
+        if st.button("Apply correlation reduction", key="btn_corr"):
+            treated, log = correlation_reduction(df, target, threshold=corr_t)
+            st.session_state.processed_df = treated
+            st.session_state.vr_log = log
+            st.success(f"Removed {len(log['removed'])} highly correlated features")
+            log_step("Variable Reduction (Correlation)")
+            st.rerun()
+
+    elif method == "Variance threshold":
         thresh = st.slider("Variance threshold", 0.0, 0.1, 0.01, 0.005)
         if st.button("Apply variance reduction", key="btn_var"):
             treated, log = variance_reduction(df, target, threshold=thresh)
             st.session_state.processed_df = treated
+            st.session_state.vr_log = log
             st.success(f"Removed {len(log['removed_low_variance'])} low-variance columns")
             log_step("Variable Reduction")
             st.rerun()
@@ -380,6 +456,7 @@ elif step == STEPS[8]:
         if st.button("Apply PCA", key="btn_pca"):
             treated, log = apply_pca(df, target, variance_threshold=var_thresh)
             st.session_state.processed_df = treated
+            st.session_state.vr_log = log
             st.success(
                 f"Reduced to {log['n_components']} components "
                 f"({log['total_variance_explained']}% variance)"
@@ -390,6 +467,21 @@ elif step == STEPS[8]:
             )
             log_step("Variable Reduction (PCA)")
             st.rerun()
+
+    if "vr_log" in st.session_state:
+        vr = st.session_state.vr_log
+        st.markdown(f"**Last run:** {vr.get('method', 'Variable reduction')}")
+        if "vote_table" in vr:
+            chart = vote_summary_chart(vr["vote_table"])
+            if chart is not None:
+                st.plotly_chart(chart, use_container_width=True)
+            st.dataframe(vr["vote_table"], use_container_width=True)
+        if "vif_table" in vr and vr["vif_table"] is not None and len(vr["vif_table"]):
+            st.dataframe(vr["vif_table"], use_container_width=True)
+        if vr.get("pairs") or vr.get("correlation_pairs"):
+            st.write("Correlated pairs:", vr.get("pairs") or vr.get("correlation_pairs"))
+        if vr.get("removed"):
+            st.write("Removed:", vr["removed"])
 
 elif step == STEPS[9]:
     st.subheader("Feature Selection")
@@ -549,8 +641,90 @@ elif step == STEPS[13]:
                 )
 
 elif step == STEPS[14]:
-    st.subheader("Executive Report Generation")
-    st.markdown("Generate a PDF executive summary of the entire pipeline.")
+    st.subheader("Executive Report & Model Download")
+    st.markdown(
+        "Generate a PDF executive summary and download the trained model "
+        "as a **pickle / joblib** file for offline scoring."
+    )
+
+    if st.session_state.training_result is None:
+        st.warning("Train a model in **Model Selection** before exporting.")
+    else:
+        tr = st.session_state.training_result
+        m = tr["metrics"]
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Model", tr["model_name"])
+        c2.metric("ROC-AUC", f"{m['roc_auc']:.2%}")
+        c3.metric("F1", f"{m['f1']:.2%}")
+        c4.metric("Features", len(tr["feature_names"]))
+
+        st.markdown("#### Download model for scoring")
+        try:
+            artifact = build_scoring_artifact(tr)
+            joblib_bytes = artifact_to_joblib_bytes(artifact)
+            pickle_bytes = artifact_to_pickle_bytes(artifact)
+            model_pkl = model_only_pickle_bytes(tr)
+            features_csv = feature_list_csv_bytes(tr["feature_names"])
+            stamp = pd.Timestamp.utcnow().strftime("%Y%m%d_%H%M%S")
+
+            d1, d2, d3 = st.columns(3)
+            with d1:
+                st.download_button(
+                    "Download scoring package (.joblib)",
+                    joblib_bytes,
+                    file_name=f"scoring_model_{stamp}.joblib",
+                    mime="application/octet-stream",
+                    type="primary",
+                    key="dl_joblib",
+                    help="Recommended: model + feature_names + label_map + metrics",
+                )
+            with d2:
+                st.download_button(
+                    "Download scoring package (.pkl)",
+                    pickle_bytes,
+                    file_name=f"scoring_model_{stamp}.pkl",
+                    mime="application/octet-stream",
+                    key="dl_pkl",
+                )
+            with d3:
+                st.download_button(
+                    "Download model only (.pkl)",
+                    model_pkl,
+                    file_name=f"model_only_{stamp}.pkl",
+                    mime="application/octet-stream",
+                    key="dl_model_only",
+                )
+
+            st.download_button(
+                "Download feature list (CSV)",
+                features_csv,
+                file_name=f"feature_names_{stamp}.csv",
+                mime="text/csv",
+                key="dl_features",
+            )
+            st.download_button(
+                "Download scoring Python snippet",
+                SCORING_SNIPPET.encode("utf-8"),
+                file_name="score_with_artifact.py",
+                mime="text/x-python",
+                key="dl_snippet",
+            )
+            with st.expander("What's inside the scoring package?"):
+                st.code(
+                    "{\n"
+                    "  'model': fitted sklearn estimator,\n"
+                    "  'feature_names': ordered columns for predict,\n"
+                    "  'label_map': target label encoding,\n"
+                    "  'model_name': str,\n"
+                    "  'metrics': holdout metrics,\n"
+                    "  'version': '1.0',\n"
+                    "}",
+                    language="python",
+                )
+        except Exception as exc:
+            st.error(f"Could not build scoring artifact: {exc}")
+
+    st.markdown("#### Executive PDF report")
     if st.button("Generate PDF Report", key="btn_report", type="primary"):
         pipeline_state = {
             "quality_score": st.session_state.quality_score,
@@ -584,6 +758,7 @@ elif step == STEPS[14]:
                         f,
                         file_name=os.path.basename(filepath),
                         mime="application/pdf",
+                        key="dl_pdf_report",
                     )
                 st.success(f"Report saved to `{filepath}`")
 
